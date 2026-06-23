@@ -12,6 +12,7 @@
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
 #include <boost/serialization/vector.hpp>
+#include <new>
 
 constexpr int kInvalidLevel = -1; // 无效层级
 

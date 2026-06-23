@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package kvserverrpc;
+
+message GetArgs{
+    bytes key = 1;
+    bytes client_id = 2;
+    int32 request_id = 3;
+}
+
+message GetReply{
+    bytes error = 1;
+    int32 error_type = 2;
+    bytes value = 3;
+}
+
+message PutArgs{
+    bytes key = 1;
+    bytes value = 2;
+    bytes client_id = 3;
+    bytes request_id = 4;
+}
+
+message PutReply{
+    bytes error = 1;
+    int32 error_type = 2;
+}
+
+message SetArgs{
+    bytes key = 1;
+    bytes value = 2;
+    bytes client_id = 3;
+    bytes request_id = 4;
+}
+
+message SetReply{
+    bytes error = 1;
+    int32 error_type = 2;
+}
+
+service KvServerRpcService{
+    rpc Get(GetArgs) returns(GetReply);
+    rpc Put(PutArgs) returns(PutReply);
+    rpc Set(SetArgs) returns(SetReply);
+}

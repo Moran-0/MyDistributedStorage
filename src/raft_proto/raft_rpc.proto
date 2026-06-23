@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package raftrpc;
+option cc_generic_services = true;// 开启stub服务
+
+// 日志实体
+message LogEntry{
+    bytes command = 1;
+    int32 log_term = 2;
+    int32 log_index = 3;
+}
+
+// 应用日志请求
+message AppendEntriesArgs{
+    int32 term = 1;
+    int32 leader_id = 2;
+    int32 leader_commit = 3;
+    int32 prev_log_term = 4;
+    int32 prev_log_index = 5;
+    repeated LogEntry log_entries = 6;
+}
+
+// 应用日志回复
+message AppendEntriesReply {
+    int32 term = 1; // follower的term
+    bool success = 2;
+    int32 next_update_index = 3; // 快速调整leader对应的nextIndex
+    int32 raft_state = 4; // 标识节点（网络）状态
+}
+
+message RequestVoteArgs {
+    int32 term = 1;
+    int32 candidate_id = 2;
+    int32 last_log_term = 3;
+    int32 last_log_index = 4; 
+}
+
+message RequestVoteReply {
+    int32 term = 1;
+    bool vote_granted = 2;
+    int32 vote_state = 3;
+}
+
+message InstallSnapshotArgs{
+    int32 term = 1;
+    int32 leader_id = 2;
+    int32 last_snapshot_term = 3;
+    int32 last_snapshot_index = 4;
+    bytes data = 5;
+}
+
+// 只用返回Term，因为对于快照只要Term是符合的就是无条件接受的todo:
+message InstallSnapshotReply{
+    int32 term = 1;
+}
+
+
+service RaftRpcService{
+    rpc AppendEntries(AppendEntriesArgs) returns(AppendEntriesReply);
+    rpc RequestVote(RequestVoteArgs) returns(RequestVoteReply);
+    rpc InstallSnapshot(InstallSnapshotArgs) returns(InstallSnapshotReply);
+}
