@@ -5,7 +5,7 @@ project(DistributedStorage)
 set(CMAKE_CXX_STANDARD 20)
 # 设置项目可执行文件输出的路径
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
-# 设置项目库文件输出的路径
+# 设置项目动态库文件输出的路径
 set(LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 # 生成 compile_commands.json，供 clangd 等 IDE 工具使用
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -24,17 +24,18 @@ include_directories(${THIRD_PARTY_INCLUDE})
 # if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
 #   link_directories(${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib)
 # endif()
-add_library(skip_list INTERFACE)
-target_include_directories(skip_list INTERFACE
-    ${COMMON_INCLUDE}
-    ${Boost_INCLUDE_DIRS}
-)
-target_link_libraries(skip_list INTERFACE Boost::serialization)
+# add_library(skip_list INTERFACE)
+# target_include_directories(skip_list INTERFACE
+#     ${COMMON_INCLUDE}
+#     ${Boost_INCLUDE_DIRS}
+# )
+# target_link_libraries(skip_list INTERFACE Boost::serialization)
 add_library(myrpc STATIC ${RPC_SRC})
 target_include_directories(myrpc PRIVATE ${COMMON_INCLUDE})
 
 add_executable(skip_list_test test/skip_list_test.cpp)
-target_link_libraries(skip_list_test PRIVATE skip_list)
+target_link_libraries(skip_list_test PRIVATE Boost::serialization)
+target_include_directories(skip_list_test PRIVATE ${Boost_INCLUDE_DIRS} ${COMMON_INCLUDE})
 
 add_executable(myrpc_connect_pool_test test/myrpc_connect_pool_test.cpp)
 target_include_directories(myrpc_connect_pool_test PRIVATE ${COMMON_INCLUDE} ${RPC_INCLUDE})
