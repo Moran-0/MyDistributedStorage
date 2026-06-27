@@ -57,7 +57,8 @@ void ConsistentHash::Rebalance() {
     double avg =
         static_cast<double>(total_requests_.load(std::memory_order_relaxed)) / static_cast<double>(node_counts_.size());
     std::unordered_map<std::string, int> old_replicas = node_replicas_;
-    for (const auto& pair : node_counts_) {
+    auto old_node_counts = node_counts_;
+    for (const auto& pair : old_node_counts) {
         const std::string& node = pair.first;
         auto count = pair.second->load();
         double ratio = static_cast<double>(count) / avg;
@@ -69,6 +70,8 @@ void ConsistentHash::Rebalance() {
         } else {
             new_replicas = static_cast<int>(std::round(old_replicas * (2.0 - ratio))); // 冷节点缓慢扩张
         }
+        // new_replicas 可能算出 0,进行防护
+        new_replicas = std::max(config_.min_replicas, std::min(new_replicas, config_.max_replicas));
         RemoveNode(node);
         AddNodesInternal(node, new_replicas);
     }
@@ -76,7 +79,16 @@ void ConsistentHash::Rebalance() {
     std::sort(keys_.begin(), keys_.end());
 }
 
-ConsistentHash::ConsistentHash(HashConfig cfg) : config_(cfg) {}
+ConsistentHash::ConsistentHash(HashConfig cfg) : config_(cfg), total_requests_(0), stop_balance_(false) {
+    StartBalancer();
+}
+
+ConsistentHash::~ConsistentHash() {
+    stop_balance_.store(true, std::memory_order_relaxed);
+    if (balance_thread_.joinable()) {
+        balance_thread_.join();
+    }
+}
 
 /// @brief 添加物理节点
 /// @param nodes
@@ -108,7 +120,7 @@ void ConsistentHash::RemoveNode(std::string const& key) {
         crc32_computer.process_bytes(virtual_node.c_str(), virtual_node.size());
         uint32_t hash_val = crc32_computer.checksum();
         auto it_vec = std::remove(keys_.begin(), keys_.end(), hash_val);
-        keys_.erase(it_vec);
+        keys_.erase(it_vec, keys_.end());
         ring_.erase(hash_val);
     }
     // 删除节点后无需重新排序
@@ -136,7 +148,7 @@ std::string ConsistentHash::GetTargetNode(std::string const& key) {
         uint32_t hash_val = crc32_computer.checksum();
         auto it = std::lower_bound(keys_.begin(), keys_.end(), hash_val); // 二分查找第一个不小于hash_val的节点
         if (it == keys_.end()) {
-            it = keys_.end(); // 超出环尾 → 回绕到环头（顺时针首节点）
+            it = keys_.begin(); // 超出环尾 → 回绕到环头（顺时针首节点）
         }
         node = ring_[*it];
         counter_ptr = node_counts_[node]; // 取出原子计数指针

@@ -40,7 +40,7 @@ class ConsistentHash {
 
   public:
     ConsistentHash(HashConfig cfg = {10, 5, 200, 0.25});
-    ~ConsistentHash() = default;
+    ~ConsistentHash();
     void AddNodes(const std::vector<std::string>& nodes);
     void RemoveNode(std::string const& key);
     std::string GetTargetNode(std::string const& key);

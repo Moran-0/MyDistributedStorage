@@ -2,12 +2,14 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <condition_variable>
 #define THREADED
 #include <zookeeper/zookeeper.h>
 
 class ZkClient {
   private:
     mutable std::mutex mtx_;
+    std::condition_variable cv_;
     bool is_connected_;
     bool is_closing_;
     std::string connstr_;

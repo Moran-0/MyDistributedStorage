@@ -6,6 +6,7 @@
 #include "service_discovery.h"
 #include "myrpc_connect_pool.h"
 #include "rpc_header.pb.h"
+#include "spdlog/fmt/fmt.h"
 
 using myrpc::RpcHeader;
 namespace {
@@ -47,8 +48,23 @@ void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* con
     // 请求ID做路由key,负载更均匀分布
     std::string ip_port = ServiceDiscovery::GetInstance().GetTargetNode(service_name, std::to_string(req_id));
     auto pos = ip_port.find(':');
+    if (ip_port.empty() || pos == std::string::npos || pos == 0 || pos + 1 >= ip_port.size()) {
+        controller->SetFailed(
+            fmt::format("service discovery failed: invalid endpoint for {0}:{1}", service_name, ip_port));
+        return;
+    }
     std::string ip_str = ip_port.substr(0, pos);
-    int port = std::stoi(ip_port.substr(pos + 1));
+    int port = 0;
+    try {
+        port = std::stoi(ip_port.substr(pos + 1));
+        if (port < 0 || port > 65535) {
+            throw std::runtime_error("invalid port!");
+        }
+    } catch (const std::exception& e) {
+        controller->SetFailed(
+            fmt::format("service discovery failed: invalid port in endpoint:{0};{1}", ip_port, e.what()));
+        return;
+    }
 
     /**从连接池借用 TCP 连接 */
     int client_fd = RpcConnectPool::GetInstance().BorrowConnection(ip_str, port);
@@ -73,7 +89,7 @@ void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* con
     }
     RpcHeader rpc_header;
     rpc_header.set_service_name(service_name);
-    rpc_header.set_methond_name(method_name);
+    rpc_header.set_method_name(method_name);
     rpc_header.set_args_size(args_str.size());
     std::string header_str;
     if (!rpc_header.SerializeToString(&header_str)) {
@@ -92,11 +108,23 @@ void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* con
     send_rpc_str.append(reinterpret_cast<char*>(&net_header_len), kFixHeaderSize);
     send_rpc_str.append(header_str);
     send_rpc_str.append(args_str);
-    if (send(client_fd, send_rpc_str.c_str(), send_rpc_str.size(), MSG_NOSIGNAL) == -1) {
+    size_t send_size = send_rpc_str.size();
+    size_t send_left = send_rpc_str.size();
+    // 确保数据全部发送出去了
+    while (send_left > 0) {
+        ssize_t send_bytes = send(client_fd, send_rpc_str.c_str() + send_size - send_left, send_left, MSG_NOSIGNAL);
+        if (send_bytes > 0) {
+            send_left -= static_cast<size_t>(send_bytes);
+            continue;
+        }
+        if (send_bytes == -1 && errno == EINTR) {
+            continue;
+        }
         controller->SetFailed("send rpc message failed!");
         RpcConnectPool::GetInstance().ReturnConnection(ip_str, port, client_fd, true);
         return;
     }
+
     /**
      * 接收响应并解码
      * ┌────────────────┬─────────────────┐
@@ -111,6 +139,7 @@ void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* con
         RpcConnectPool::GetInstance().ReturnConnection(ip_str, port, client_fd, true);
         return;
     }
+    response_len = ntohl(response_len);
     std::vector<char> response_buf(response_len);
     if (RecvExac(client_fd, response_buf.data(), response_len) != response_len) {
         controller->SetFailed("recv rpc response content failed!");

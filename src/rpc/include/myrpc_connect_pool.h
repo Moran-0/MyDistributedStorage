@@ -25,6 +25,6 @@ class RpcConnectPool {
     void WarmUp(const std::string& ip, uint16_t port, int count); // 预热连接
 
     int max_conn_per_;
-    std::unordered_map<std::string, ConnectionBucket*> pools_;
+    std::unordered_map<std::string, std::unique_ptr<ConnectionBucket>> pools_;
     std::mutex mtx_;
 };

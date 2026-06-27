@@ -7,6 +7,8 @@
 
 using myrpc::RpcHeader;
 namespace {
+constexpr uint32_t kMaxRpcFrameSize = 16 * 1024 * 1024;
+constexpr uint32_t kMaxRpcHeaderSize = 64 * 1024;
 /// @brief protobuf Closure回调类实现
 class MyRpcClosure : public google::protobuf::Closure {
   private:
@@ -92,6 +94,11 @@ void MyRpcProvider::OnMessage(const muduo::net::TcpConnectionPtr& conn, muduo::n
         uint32_t total_len;
         std::memcpy(&total_len, buffer->peek(), kFixHeaderSize);
         total_len = ntohl(total_len); // 改变字节序
+        if (total_len < kFixHeaderSize || total_len > kMaxRpcFrameSize) {
+            spdlog::warn("invalid rpc frame length: {}", total_len);
+            conn->shutdown();
+            return;
+        }
         // 数据不够一帧 → 退出，等下次数据到达
         if (buffer->readableBytes() < kFixHeaderSize + total_len) {
             break;
@@ -102,6 +109,11 @@ void MyRpcProvider::OnMessage(const muduo::net::TcpConnectionPtr& conn, muduo::n
         std::memcpy(&header_len, buffer->peek(), kFixHeaderSize);
         header_len = ntohl(header_len);
         buffer->retrieve(kFixHeaderSize);
+        if (header_len == 0 || header_len > kMaxRpcHeaderSize || header_len > total_len - kFixHeaderSize) {
+            spdlog::warn("invalid rpc header length: {}, total_len: {}", header_len, total_len);
+            conn->shutdown();
+            return;
+        }
 
         uint32_t args_len = total_len - kFixHeaderSize - header_len;
         std::string header_str(buffer->peek(), header_len);
@@ -118,7 +130,13 @@ void MyRpcProvider::OnMessage(const muduo::net::TcpConnectionPtr& conn, muduo::n
         }
         /**服务查找和反射创建对象 */
         std::string service_name = rpc_header.service_name();
-        std::string method_name = rpc_header.methond_name();
+        std::string method_name = rpc_header.method_name();
+        if (rpc_header.args_size() != args_len) {
+            spdlog::warn("rpc args size mismatch, header args_size: {}, actual args_len: {}", rpc_header.args_size(),
+                         args_len);
+            conn->shutdown();
+            return;
+        }
         auto service_it = services_map_.find(service_name);
         if (service_it == services_map_.end()) {
             spdlog::warn("service {} is not exist!", service_name);
@@ -136,6 +154,8 @@ void MyRpcProvider::OnMessage(const muduo::net::TcpConnectionPtr& conn, muduo::n
         auto* response = service->GetResponsePrototype(methdo_descriptor).New();
         if (!request->ParseFromString(args_str)) {
             spdlog::error("Failed to parse request from string!");
+            delete request;
+            delete response;
             return;
         }
         /**提交业务到线程池中 */

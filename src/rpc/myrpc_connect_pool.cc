@@ -23,13 +23,13 @@ int RpcConnectPool::BorrowConnection(const std::string& ip, uint16_t port) {
         std::scoped_lock lock(mtx_);
         auto pair = pools_.find(key);
         if (pair != pools_.end()) {
-            conn_bucket = pair->second;
+            conn_bucket = pair->second.get();
         }
     }
     if (!conn_bucket) {
         WarmUp(ip, port, kWarmUpSize);
         std::scoped_lock lock(mtx_);
-        conn_bucket = pools_[key];
+        conn_bucket = pools_[key].get();
     }
     int fd = -1;
     if (conn_bucket->free_fds->Pop(fd)) {
@@ -56,7 +56,7 @@ void RpcConnectPool::ReturnConnection(const std::string& ip, uint16_t port, int 
         std::scoped_lock lock(mtx_);
         auto pair = pools_.find(key);
         if (pair != pools_.end()) {
-            conn_bucket = pair->second;
+            conn_bucket = pair->second.get();
         }
     }
     if (!conn_bucket) {
@@ -83,7 +83,6 @@ RpcConnectPool::~RpcConnectPool() {
         while (ip_conn_pair.second->free_fds->Pop(fd)) {
             close(fd);
         }
-        delete ip_conn_pair.second;
     }
 }
 
@@ -93,22 +92,22 @@ RpcConnectPool::~RpcConnectPool() {
 /// @param count
 void RpcConnectPool::WarmUp(const std::string& ip, uint16_t port, int count) {
     std::string key = ip + ":" + std::to_string(port);
-    ConnectionBucket* connBucket = nullptr;
+    ConnectionBucket* conn_bucket = nullptr;
     // 判断ConnectionBucket是否存在
     {
         std::scoped_lock lock(mtx_); // pools_互斥访问
         auto res = pools_.find(key);
         if (res == pools_.end()) {
-            connBucket = new ConnectionBucket(kMaxConnSize);
-            pools_.insert({key, connBucket});
+            auto [it, inserted] = pools_.try_emplace(key, std::make_unique<ConnectionBucket>(kMaxConnSize));
+            conn_bucket = it->second.get();
         } else {
-            connBucket = res->second;
+            conn_bucket = res->second.get();
         }
     }
     int success_add = 0;
     // 往connBucket中加入连接
     for (int i = 0; i < count; ++i) {
-        if (connBucket->active_count.load() > max_conn_per_) {
+        if (conn_bucket->active_count.load() > max_conn_per_) {
             break;
         }
         int fd = socket(AF_INET, SOCK_STREAM, 0); // 建立tcp ipv4连接
@@ -124,9 +123,9 @@ void RpcConnectPool::WarmUp(const std::string& ip, uint16_t port, int count) {
         addr.sin_addr.s_addr = inet_addr(ip.c_str());
 
         if (connect(fd, (sockaddr*)&addr, sizeof(sockaddr)) == 0) {
-            connBucket->active_count.fetch_add(1);
-            if (!connBucket->free_fds->Push(fd)) {
-                connBucket->active_count.fetch_sub(1);
+            conn_bucket->active_count.fetch_add(1);
+            if (!conn_bucket->free_fds->Push(fd)) {
+                conn_bucket->active_count.fetch_sub(1);
                 close(fd);
             } else {
                 ++success_add;

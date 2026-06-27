@@ -6,6 +6,7 @@ namespace {
 constexpr int kZkTimeoutMs = 6000;
 constexpr int kPathBufLen = 512;
 constexpr int kDataBufLen = 512;
+constexpr int kWaitTimeOut = 2;
 } // namespace
 
 void ZkClient::SessionWatcher(zhandle_t* zh, int type, int state, const char* path, void* watcherCtx) {
@@ -15,6 +16,7 @@ void ZkClient::SessionWatcher(zhandle_t* zh, int type, int state, const char* pa
     auto* client = static_cast<ZkClient*>(watcherCtx);
     if (client != nullptr) {
         client->OnSessionEvent(state);
+        client->cv_.notify_all(); // 通知zhandle句柄创建状态
     }
 }
 
@@ -68,9 +70,11 @@ ZkClient::~ZkClient() {
 
 /// @brief 创建zhandle_t句柄
 void ZkClient::Start() {
-    std::scoped_lock lock(mtx_);
-    if (zhandle_ != nullptr && is_connected_) {
-        return; // 已经建立连接
+    {
+        std::scoped_lock lock(mtx_);
+        if (zhandle_ != nullptr && is_connected_) {
+            return; // 已经建立连接
+        }
     }
     std::string ip = MyRpcConfig::GetInstance().Load("zookeeperip");
     std::string port = MyRpcConfig::GetInstance().Load("zookeeperport");
@@ -80,9 +84,16 @@ void ZkClient::Start() {
         spdlog::error("zookeeper_init error");
         return;
     }
+    std::unique_lock lock(mtx_);
+    bool state = cv_.wait_for(lock, std::chrono::seconds(kWaitTimeOut), [this]() { return is_connected_; });
+    if (state) {
+        spdlog::info("zookeeper_init success!");
+    } else {
+        spdlog::error("zookeeper_init error");
+    }
 }
 
-/// @brief 获取节点数据
+/// @brief 获取节点数据 ip:port字符串
 /// @param path
 /// @return
 std::string ZkClient::GetData(std::string const& path) {
@@ -101,6 +112,11 @@ std::string ZkClient::GetData(std::string const& path) {
     return std::string(buf, buf_len);
 }
 
+/// @brief 获取该服务的子节点数据 (提供该服务的物理节点ip:port数据)
+/// @param path
+/// @param fn
+/// @param cbContext
+/// @return
 std::vector<std::string> ZkClient::GetChildren(std::string const& path, watcher_fn fn, void* cbContext) {
     std::vector<std::string> res;
     if (!EnsureConnected() || path.empty()) {
@@ -118,6 +134,7 @@ std::vector<std::string> ZkClient::GetChildren(std::string const& path, watcher_
         if (!child_path.empty() && child_path.back() != '/') {
             child_path.push_back('/');
         }
+        child_path.append(nodes.data[i]);
         std::string data = GetData(child_path);
         if (!data.empty()) {
             res.push_back(data);
