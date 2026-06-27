@@ -15,8 +15,8 @@ set(THIRD_PARTY_INCLUDE ${PROJECT_SOURCE_DIR}/third-party)
 
 
 aux_source_directory(${PROJECT_SOURCE_DIR}/src/rpc RPC_SRC)
-
 find_package(Boost REQUIRED COMPONENTS serialization)
+find_package(Protobuf REQUIRED)
 include_directories(${RPC_INCLUDE})
 include_directories(${THIRD_PARTY_INCLUDE})
 # 添加 vcpkg 管理的 Boost 库路径，使 -lboost_serialization 等能被找到
@@ -32,6 +32,13 @@ include_directories(${THIRD_PARTY_INCLUDE})
 # target_link_libraries(skip_list INTERFACE Boost::serialization)
 add_library(myrpc STATIC ${RPC_SRC})
 target_include_directories(myrpc PRIVATE ${COMMON_INCLUDE})
+target_link_libraries(myrpc PUBLIC
+    protobuf::libprotobuf
+    zookeeper_mt
+    pthread
+    muduo_net
+    muduo_base
+)
 
 add_executable(skip_list_test test/skip_list_test.cpp)
 target_link_libraries(skip_list_test PRIVATE Boost::serialization)
@@ -39,4 +46,18 @@ target_include_directories(skip_list_test PRIVATE ${Boost_INCLUDE_DIRS} ${COMMON
 
 add_executable(myrpc_connect_pool_test test/myrpc_connect_pool_test.cpp)
 target_include_directories(myrpc_connect_pool_test PRIVATE ${COMMON_INCLUDE} ${RPC_INCLUDE})
-target_link_libraries(myrpc_connect_pool_test PRIVATE myrpc pthread)
+target_link_libraries(myrpc_connect_pool_test PRIVATE myrpc)
+
+add_executable(echo_server
+    example/rpc_demo/echo_server.cc
+    example/rpc_demo/rpc_demo.pb.cc
+)
+target_include_directories(echo_server PRIVATE ${PROJECT_SOURCE_DIR}/example/rpc_demo ${RPC_INCLUDE} ${COMMON_INCLUDE})
+target_link_libraries(echo_server PRIVATE myrpc)
+
+add_executable(echo_client
+    example/rpc_demo/echo_client.cc
+    example/rpc_demo/rpc_demo.pb.cc
+)
+target_include_directories(echo_client PRIVATE ${PROJECT_SOURCE_DIR}/example/rpc_demo ${RPC_INCLUDE} ${COMMON_INCLUDE})
+target_link_libraries(echo_client PRIVATE myrpc)
