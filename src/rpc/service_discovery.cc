@@ -13,6 +13,7 @@ void ServiceDiscovery::WatcherCallback(zhandle_t* zh, int type, int state, const
     if (sd->nodes_hash_.find(service_name) != sd->nodes_hash_.end()) {
         sd->nodes_hash_[service_name]->UpdateNodes(update_nodes);
     }
+    sd->nodes_cache_[service_name] = update_nodes;
 }
 
 ServiceDiscovery& ServiceDiscovery::GetInstance() {
@@ -45,8 +46,19 @@ std::string ServiceDiscovery::GetTargetNode(std::string const& service_name, std
         if (nodes_hash_.find(service_name) == nodes_hash_.end()) {
             nodes_hash_[service_name] = std::make_unique<ConsistentHash>();
             nodes_hash_[service_name]->AddNodes(update_nodes);
-            // nodes_cache_[service_name] = update_nodes;
+            nodes_cache_[service_name] = update_nodes;
         }
         return nodes_hash_[service_name]->GetTargetNode(key);
     }
+}
+
+/// @brief 获取指定服务的全部物理节点名称（ip:port）
+/// @param service_name
+/// @return
+std::vector<std::string> ServiceDiscovery::GetAllNodes(std::string const& service_name) {
+    auto it = nodes_cache_.find(service_name);
+    if (it == nodes_cache_.end()) {
+        return {};
+    }
+    return it->second;
 }
