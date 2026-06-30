@@ -7,6 +7,7 @@
 #include "myrpc_connect_pool.h"
 #include "rpc_header.pb.h"
 #include "spdlog/fmt/fmt.h"
+#include "spdlog/spdlog.h"
 
 using myrpc::RpcHeader;
 namespace {
@@ -34,6 +35,21 @@ ssize_t RecvExac(int fd, char* buf, size_t len) {
 }
 } // namespace
 
+/// @brief 设定要调用服务的目标，开启直连模式，不通过服务发现
+/// @param ip
+/// @param prot
+void MyRpcChannel::SetTarget(std::string const& ip, uint16_t port) {
+    target_ip_ = ip;
+    target_port_ = port;
+    have_target_ = true;
+}
+
+/// @brief 服务发现/直连->从连接池借用 TCP 连接->构造协议包并发送->接收响应并解码;
+/// @param method
+/// @param controller
+/// @param request
+/// @param response
+/// @param done 不调用回调函数，可为空
 void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* controller, const Message* request,
                               Message* response, Closure* done) {
     /** 延迟初始化，全局请求id */
@@ -46,26 +62,37 @@ void MyRpcChannel::CallMethod(const MethodDescriptor* method, RpcController* con
     std::string service_name = method->service()->name();
     std::string method_name = method->name();
     // 请求ID做路由key,负载更均匀分布
-    std::string ip_port = ServiceDiscovery::GetInstance().GetTargetNode(service_name, std::to_string(req_id));
-    auto pos = ip_port.find(':');
-    if (ip_port.empty() || pos == std::string::npos || pos == 0 || pos + 1 >= ip_port.size()) {
-        controller->SetFailed(
-            fmt::format("service discovery failed: invalid endpoint for {0}:{1}", service_name, ip_port));
-        return;
-    }
-    std::string ip_str = ip_port.substr(0, pos);
-    int port = 0;
-    try {
-        port = std::stoi(ip_port.substr(pos + 1));
-        if (port < 0 || port > 65535) {
-            throw std::runtime_error("invalid port!");
+    std::string ip_str;
+    uint16_t port = 0;
+    if (have_target_) {
+        // 直连模式
+        ip_str = target_ip_;
+        port = target_port_;
+        spdlog::info("直连模式");
+    } else {
+        // 负载均衡模式
+        spdlog::info("负载均衡模式");
+        std::string ip_port = ServiceDiscovery::GetInstance().GetTargetNode(service_name, std::to_string(req_id));
+        auto pos = ip_port.find(':');
+        if (ip_port.empty() || pos == std::string::npos || pos == 0 || pos + 1 >= ip_port.size()) {
+            controller->SetFailed(
+                fmt::format("service discovery failed: invalid endpoint for {0}:{1}", service_name, ip_port));
+            return;
         }
-    } catch (const std::exception& e) {
-        controller->SetFailed(
-            fmt::format("service discovery failed: invalid port in endpoint:{0};{1}", ip_port, e.what()));
-        return;
+        ip_str = ip_port.substr(0, pos);
+        port = 0;
+        try {
+            port = std::stoi(ip_port.substr(pos + 1));
+            if (port < 0 || port > 65535) {
+                throw std::runtime_error("invalid port!");
+            }
+        } catch (const std::exception& e) {
+            controller->SetFailed(
+                fmt::format("service discovery failed: invalid port in endpoint:{0};{1}", ip_port, e.what()));
+            return;
+        }
     }
-
+    spdlog::info("ip:{0},port:{1}", ip_str, port);
     /**从连接池借用 TCP 连接 */
     int client_fd = RpcConnectPool::GetInstance().BorrowConnection(ip_str, port);
     if (client_fd == -1) {

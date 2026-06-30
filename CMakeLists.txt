@@ -12,13 +12,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(COMMON_INCLUDE ${PROJECT_SOURCE_DIR}/src/common/include)
 set(RPC_INCLUDE ${PROJECT_SOURCE_DIR}/src/rpc/include)
 set(THIRD_PARTY_INCLUDE ${PROJECT_SOURCE_DIR}/third-party)
+set(RAFT_PROTO_INCLUDE ${PROJECT_SOURCE_DIR}/src/raft_proto/include)
+set(RAFT_CORE_INCLUDE ${PROJECT_SOURCE_DIR}/src/raft_core/include)
 
 
 aux_source_directory(${PROJECT_SOURCE_DIR}/src/rpc RPC_SRC)
+aux_source_directory(${PROJECT_SOURCE_DIR}/src/raft_core RAFT_CORE_SRC)
 find_package(Boost REQUIRED COMPONENTS serialization)
 find_package(Protobuf REQUIRED)
 include_directories(${RPC_INCLUDE})
 include_directories(${THIRD_PARTY_INCLUDE})
+include_directories(${RAFT_PROTO_INCLUDE})
+include_directories(${RAFT_CORE_INCLUDE})
 # 添加 vcpkg 管理的 Boost 库路径，使 -lboost_serialization 等能被找到
 # Boost_LIBRARY_DIRS 在 vcpkg config 模式下不会被设置，改用 vcpkg 内置变量
 # if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
@@ -30,6 +35,7 @@ include_directories(${THIRD_PARTY_INCLUDE})
 #     ${Boost_INCLUDE_DIRS}
 # )
 # target_link_libraries(skip_list INTERFACE Boost::serialization)
+# myrpc框架静态库
 add_library(myrpc STATIC ${RPC_SRC})
 target_include_directories(myrpc PRIVATE ${COMMON_INCLUDE})
 target_link_libraries(myrpc PUBLIC
@@ -40,14 +46,30 @@ target_link_libraries(myrpc PUBLIC
     muduo_base
 )
 
+#raft共识算法静态库
+add_library(raft_core STATIC ${RAFT_CORE_SRC})
+target_include_directories(raft_core PRIVATE
+${THIRD_PARTY_INCLUDE}
+${RAFT_PROTO_INCLUDE}
+${RAFT_CORE_INCLUDE}
+${RPC_INCLUDE}
+${COMMON_INCLUDE}
+)
+target_link_libraries(raft_core PRIVATE
+    myrpc
+    protobuf::libprotobuf
+)
+# 跳表测试可执行程序
 add_executable(skip_list_test test/skip_list_test.cpp)
 target_link_libraries(skip_list_test PRIVATE Boost::serialization)
 target_include_directories(skip_list_test PRIVATE ${Boost_INCLUDE_DIRS} ${COMMON_INCLUDE})
 
+# myrpc框架内连接池测试程序
 add_executable(myrpc_connect_pool_test test/myrpc_connect_pool_test.cpp)
 target_include_directories(myrpc_connect_pool_test PRIVATE ${COMMON_INCLUDE} ${RPC_INCLUDE})
 target_link_libraries(myrpc_connect_pool_test PRIVATE myrpc)
 
+# raft框架测试程序服务端
 add_executable(echo_server
     example/rpc_demo/echo_server.cc
     example/rpc_demo/rpc_demo.pb.cc
@@ -55,6 +77,7 @@ add_executable(echo_server
 target_include_directories(echo_server PRIVATE ${PROJECT_SOURCE_DIR}/example/rpc_demo ${RPC_INCLUDE} ${COMMON_INCLUDE})
 target_link_libraries(echo_server PRIVATE myrpc)
 
+# raft框架测试程序客户端
 add_executable(echo_client
     example/rpc_demo/echo_client.cc
     example/rpc_demo/rpc_demo.pb.cc
